@@ -1,9 +1,11 @@
-FROM alpine:3.9
-LABEL maintainer="Pål Ruud <ruudud@gmail.com>"
+FROM alpine:3.21
+LABEL maintainer="Lucas Mendelowski"
 
-RUN apk --no-cache add bash curl dnsmasq ed --repository=http://dl-cdn.alpinelinux.org/alpine/edge/main
+RUN apk --no-cache add bash curl dnsmasq ed
 
-RUN curl -sSL https://download.docker.com/linux/static/stable/x86_64/docker-18.09.5.tgz | tar zx -C /tmp &&\
+ARG TARGETARCH
+RUN DOCKER_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") &&\
+    curl -sSL "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-27.5.1.tgz" | tar zx -C /tmp &&\
     mv /tmp/docker/docker /usr/local/bin/ &&\
     rm -rf /tmp/docker &&\
     mkdir -p /etc/dnsmasq.d
