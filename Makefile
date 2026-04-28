@@ -17,7 +17,8 @@ push: build
 		echo "Pushing $(IMAGE):$$arch..."; \
 		docker push $(IMAGE):$$arch; \
 	done
-	docker manifest create --amend $(IMAGE):$(TAG) $(foreach p,$(PLATFORMS),$(IMAGE):$(shell echo $(p) | cut -d/ -f2))
+	docker manifest rm $(IMAGE):$(TAG) 2>/dev/null || true
+	docker manifest create $(IMAGE):$(TAG) $(foreach p,$(PLATFORMS),$(IMAGE):$(shell echo $(p) | cut -d/ -f2))
 	docker manifest push $(IMAGE):$(TAG)
 
 clean:

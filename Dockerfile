@@ -1,13 +1,7 @@
-FROM alpine:3.21
+FROM alpine:3.23
 LABEL maintainer="Lucas Mendelowski"
 
-RUN apk --no-cache add bash curl dnsmasq ed
-
-ARG TARGETARCH
-RUN DOCKER_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") &&\
-    curl -sSL "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-27.5.1.tgz" | tar zx -C /tmp &&\
-    mv /tmp/docker/docker /usr/local/bin/ &&\
-    rm -rf /tmp/docker &&\
+RUN apk --no-cache add bash docker-cli dnsmasq ed &&\
     mkdir -p /etc/dnsmasq.d
 
 COPY dnsmasq.conf /etc/dnsmasq.conf
