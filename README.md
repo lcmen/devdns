@@ -149,6 +149,15 @@ to match the value of the `DNS_DOMAIN` setting (default "test").
   first network interface (e.g. when using docker-compose) (default:
   **bridge**)
 
+Container DNS names can also be overridden per container:
+
+- `devdns.subdomain` label: sets the DNS subdomain for the container
+- `DEVDNS_SUBDOMAIN` environment variable: sets the DNS subdomain when the
+  label is not present
+
+Precedence is `devdns.subdomain`, then `DEVDNS_SUBDOMAIN`, then the Docker
+container name.
+
 Example:
 
 ```sh
@@ -161,6 +170,16 @@ docker run -d -v /var/run/docker.sock:/var/run/docker.sock \
   lmendelowski/devdns
 ```
 
+Container subdomain override example:
+
+```sh
+docker run -d --label devdns.subdomain=redis redis:alpine
+docker run -d -e DEVDNS_SUBDOMAIN=postgres postgres:alpine
+```
+
+With the default `DNS_DOMAIN=test`, these containers resolve as `redis.test`
+and `postgres.test`.
+
 ## Caveats
 
 ### Container name to DNS record conversion
@@ -168,6 +187,9 @@ docker run -d -v /var/run/docker.sock:/var/run/docker.sock \
 RFC 1123 states that `_` are not allowed in DNS records, but Docker allows it
 in container names. devdns ignores `_` and whatever follows, allowing multiple
 simultaneous containers with matching names to run at the same time.
+
+The same conversion is applied to values from `devdns.subdomain` and
+`DEVDNS_SUBDOMAIN`. Set `NAMING=full` to convert `_` to `-` instead.
 
 The DNS will resolve to the lastly added container, and try to re-toggle the
 previous matching container when stopping the currently active one.
