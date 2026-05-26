@@ -12,6 +12,8 @@ dnsmasq_confdir="/etc/dnsmasq.d/"
 dnsmasq_hostsdir="/etc/dnsmasq-hosts.d/"
 resolvconf_file="/mnt/resolv.conf"
 resolvconf_comment="# added by devdns"
+subdomain_env="DEVDNS_SUBDOMAIN"
+subdomain_label="devdns.subdomain"
 
 RESET="\e[0;0m"
 RED="\e[0;31;49m"
@@ -53,6 +55,22 @@ print_error() {
       ;;
   esac
 }
+get_env_subdomain(){
+  local cid="$1" value
+  value=$(docker inspect -f '{{ range .Config.Env }}{{ println . }}{{ end }}' "$cid" 2>/dev/null \
+    | grep -E "^${subdomain_env}=" \
+    | head -n1 \
+    | cut -d= -f2- || true)
+
+  echo "$value"
+}
+get_label_subdomain(){
+  local cid="$1" value
+  value=$(docker inspect -f "{{ index .Config.Labels \"${subdomain_label}\" }}" "$cid" 2>/dev/null || true)
+  [[ "$value" == "<no value>" ]] && value=""
+
+  echo "$value"
+}
 get_name(){
   local cid="$1"
   docker inspect -f '{{ .Name }}' "$cid" | sed "s,^/,,"
@@ -74,6 +92,18 @@ get_safe_name(){
   esac
 
   echo "$name"
+}
+get_container_record_name(){
+  local cid="$1" name
+
+  name=$(get_label_subdomain "$cid")
+  [[ -n "$name" ]] && get_safe_name "$name" && return 0
+
+  name=$(get_env_subdomain "$cid")
+  [[ -n "$name" ]] && get_safe_name "$name" && return 0
+
+  name=$(get_name "$cid")
+  get_safe_name "$name"
 }
 set_record(){
   local record="$1" ip="$2" fpath infomsg
@@ -98,7 +128,7 @@ del_container_record(){
   [[ -f "$file" ]] && rm "$file" && echo -e "${RED}- Removed record for ${record}${RESET}"
 }
 set_container_record(){
-  local cid="$1" ip name safename record cnetwork
+  local cid="$1" ip safename record cnetwork
   cnetwork="$network"
 
   # set the network to the first detected network, if any
@@ -109,21 +139,26 @@ set_container_record(){
     [[ -z "$cnetwork" ]] && print_error "network" && return 1
   fi
   ip=$(docker inspect -f "{{with index .NetworkSettings.Networks \"${cnetwork}\"}}{{.IPAddress}}{{end}}" "$cid" | head -n1)
-  name=$(get_name "$cid")
-  safename=$(get_safe_name "$name")
+  safename=$(get_container_record_name "$cid")
   record="${safename}.${domain}"
   set_record "$record" "$ip"
 }
 find_and_set_prev_record(){
-  local name="$1" prevcid
-  prevcid=$(docker ps -q -f "name=${name}.*" | head -n1)
+  local name="$1" prevcid ids safename
+  ids=$(docker ps -q)
+  for prevcid in $ids; do
+    safename=$(get_container_record_name "$prevcid")
+    [[ "$safename" == "$name" ]] && break
+    prevcid=""
+  done
+
   [[ -z "$prevcid" ]] && return 0
 
   echo -e "${YELLOW}+ Found other active container with matching name: ${name}${RESET}"
   set_container_record "$prevcid"
 }
 setup_listener(){
-  local name
+  local name safename
   while read -r _ _ event container meta; do
     case "$event" in
       start|rename)
@@ -131,7 +166,10 @@ setup_listener(){
         reload_dnsmasq
         ;;
       die)
-        name=$(echo "$meta" | grep -Eow "name=[a-zA-Z0-9.-_]+" | cut -d= -f2)
+        name=$(get_container_record_name "$container")
+        if [[ -z "$name" ]]; then
+          name=$(echo "$meta" | grep -Eow "name=[a-zA-Z0-9.-_]+" | cut -d= -f2)
+        fi
         [[ -z "$name" ]] && continue
         safename=$(get_safe_name "$name")
 
