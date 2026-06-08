@@ -31,6 +31,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@master
       - name: Shell script check
-        uses: Azbagheri/shell-linter@v0.6.0
+        uses: Azbagheri/shell-linter@v0.8.0
         with:
           path: "run.sh"
