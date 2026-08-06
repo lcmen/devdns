@@ -83,47 +83,46 @@ included `-p 53:53/udp` when starting the devdns container.
 You will need to add some configuration to your OS DNS resolving mechanism to
 make it query devdns.
 
-**NOTE**: This is only practical if you added `-p 53:53/udp` when starting
-devdns.
+**NOTE**: This is only practical if you publish devdns on host UDP port 53 when
+starting it. On Linux with `systemd-resolved`, use the loopback-only binding
+shown below.
 
 #### Linux
 
-Nowadays, direct edits of `/etc/resolv.conf` will often be removed at reboot.
-Thus, the best place to add extra resolvers in Linux, is to use your network
-configurator. YMMV. This means NetworkManager (see [section
-below](#networkmanager-on-ubuntu)), WICD, or manually using
-`/etc/network/interfaces`:
-
-```
-auto p3p1
-iface p3p1 inet dhcp
-dns-search test
-dns-nameservers 127.0.0.1
-```
-
-##### Managed `resolv.conf`
-
-Another solution is mounting the host machine's `/etc/resolv.conf` at
-`/mnt/resolv.conf` and have devdns automatically add configuration on startup:
+Most current distributions use `systemd-resolved`. Check before continuing:
 
 ```sh
-docker run -d -v /var/run/docker.sock:/var/run/docker.sock:ro \
-      -v /etc/resolv.conf:/mnt/resolv.conf \
-      lmendelowski/devdns
+readlink -f /etc/resolv.conf
 ```
 
-Example config prepended to `/etc/resolv.conf`:
+If this prints `/run/systemd/resolve/stub-resolv.conf`, publish devdns on the host loopback address. Binding specifically to `127.0.0.1` avoids conflicting with the resolver's `127.0.0.53` listener:
 
+```sh
+docker run -d --name devdns -p 127.0.0.1:53:53/udp \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  lmendelowski/devdns
 ```
-nameserver 192.168.16.2 # added by devdns
+
+Then create a persistent `systemd-resolved` drop-in that routes the `test` domain to devdns:
+
+```sh
+sudo mkdir -p /etc/systemd/resolved.conf.d
+sudo tee /etc/systemd/resolved.conf.d/test.conf >/dev/null <<'EOF'
+[Resolve]
+DNS=127.0.0.1
+Domains=~test
+EOF
+sudo systemctl restart systemd-resolved
 ```
 
-The configuration will be automatically removed when container is stopped or
-killed.
+The `~` makes `test` a route-only domain: it sends `*.test` queries to devdns without adding `test` to unqualified host names or replacing the DNS servers provided by your network. Replace `test` with the value of `DNS_DOMAIN` if you changed it; using the domain as the drop-in filename also makes its purpose clear.
 
-> :warning: **It's common that `/etc/resolv.conf` becomes overwritten** as
-> many operating systems now manage the creation of that file, and in some
-> cases not even rely on it at all.
+The drop-in is loaded automatically at boot. To undo the configuration, remove it and restart `systemd-resolved`:
+
+```sh
+sudo rm /etc/systemd/resolved.conf.d/test.conf
+sudo systemctl restart systemd-resolved
+```
 
 #### OSX
 
@@ -209,23 +208,4 @@ $ dig redis.test     # resolves to the IP of redis_local-V1
 
 $ docker stop redis_local-V1
 $ dig redis.test     # resolves to the IP of the host machine (default)
-```
-
-### NetworkManager on Ubuntu
-
-If you're using **NetworkManager**, you should disable the built-in DNSMasq to
-get the port binding of port 53 to work.
-
-Edit `/etc/NetworkManager/NetworkManager.conf` and comment out the line
-`dns=dnsmasq` so it looks like this:
-
-    # dns=dnsmasq
-
-Restart using `sudo service network-manager restart`.
-
-Now you should be able to do
-
-```sh
-docker run -d -v /var/run/docker.sock:/var/run/docker.sock:ro \
-    -p 53:53/udp lmendelowski/devdns
 ```
