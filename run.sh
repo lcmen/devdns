@@ -14,6 +14,8 @@ resolvconf_file="/mnt/resolv.conf"
 resolvconf_comment="# added by devdns"
 subdomain_env="DEVDNS_SUBDOMAIN"
 subdomain_label="devdns.subdomain"
+container_ids=()
+container_names=()
 
 RESET="\e[0;0m"
 RED="\e[0;31;49m"
@@ -128,12 +130,12 @@ del_container_record(){
   [[ -f "$file" ]] && rm "$file" && echo -e "${RED}- Removed record for ${record}${RESET}"
 }
 set_container_record(){
-  local cid="$1" ip safename record cnetwork
+  local cid="$1" ip safename record cnetwork i
   cnetwork="$network"
 
   # set the network to the first detected network, if any
   if [[ "$network" == "auto" ]]; then
-    cnetwork=$(docker inspect -f '{{ range $k, $v := .NetworkSettings.Networks }}{{ $k }}{{ end }}' "$cid" | head -n1)
+    cnetwork=$(docker inspect -f '{{ range $k, $v := .NetworkSettings.Networks }}{{ println $k }}{{ end }}' "$cid" | head -n1)
     # abort if the container has no network interfaces, e.g.
     # if it inherited its network from another container
     [[ -z "$cnetwork" ]] && print_error "network" && return 1
@@ -141,7 +143,33 @@ set_container_record(){
   ip=$(docker inspect -f "{{with index .NetworkSettings.Networks \"${cnetwork}\"}}{{.IPAddress}}{{end}}" "$cid" | head -n1)
   safename=$(get_container_record_name "$cid")
   record="${safename}.${domain}"
-  set_record "$record" "$ip"
+  set_record "$record" "$ip" || return 1
+  for i in "${!container_ids[@]}"; do
+    if [[ "${container_ids[$i]}" == "$cid" ]]; then
+      container_names[i]="$safename"
+      return 0
+    fi
+  done
+  container_ids+=("$cid")
+  container_names+=("$safename")
+}
+get_tracked_record_name(){
+  local cid="$1" i
+  for i in "${!container_ids[@]}"; do
+    if [[ "${container_ids[$i]}" == "$cid" ]]; then
+      echo "${container_names[$i]}"
+      return 0
+    fi
+  done
+}
+forget_container_record(){
+  local cid="$1" i
+  for i in "${!container_ids[@]}"; do
+    if [[ "${container_ids[$i]}" == "$cid" ]]; then
+      unset 'container_ids[i]' 'container_names[i]'
+      return 0
+    fi
+  done
 }
 find_and_set_prev_record(){
   local name="$1" prevcid ids safename
@@ -158,15 +186,27 @@ find_and_set_prev_record(){
   set_container_record "$prevcid"
 }
 setup_listener(){
-  local name safename
+  local name safename oldname
   while read -r _ _ event container meta; do
     case "$event" in
-      start|rename)
+      start)
+        set_container_record "$container"
+        reload_dnsmasq
+        ;;
+      rename)
+        oldname=$(get_tracked_record_name "$container")
+        name=$(get_container_record_name "$container")
+        if [[ -n "$oldname" && "$oldname" != "$name" ]]; then
+          del_container_record "$oldname"
+          forget_container_record "$container"
+          find_and_set_prev_record "$oldname"
+        fi
         set_container_record "$container"
         reload_dnsmasq
         ;;
       die)
-        name=$(get_container_record_name "$container")
+        name=$(get_tracked_record_name "$container")
+        [[ -z "$name" ]] && name=$(get_container_record_name "$container")
         if [[ -z "$name" ]]; then
           name=$(echo "$meta" | grep -Eow "name=[a-zA-Z0-9.-_]+" | cut -d= -f2)
         fi
@@ -174,6 +214,7 @@ setup_listener(){
         safename=$(get_safe_name "$name")
 
         del_container_record "$safename"
+        forget_container_record "$container"
         sleep 1
         find_and_set_prev_record "$safename"
         reload_dnsmasq
